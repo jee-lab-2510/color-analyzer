@@ -65,14 +65,28 @@ def analyze_colors(image, k, resize_val):
     
     return hist, clt.cluster_centers_
 
+def plot_bar(hist, centers):
+    """색상 비율을 보여주는 가로 스펙트럼 바 생성"""
+    bar = np.zeros((100, 1000, 3), dtype="uint8")
+    startX = 0
+    # 스펙트럼 바는 항상 분포율(%) 순서대로 그리는 것이 시각적으로 자연스럽습니다.
+    # (zip으로 묶어서 정렬)
+    zipped = sorted(zip(hist, centers), key=lambda x: x[0], reverse=True)
+    
+    for (percent, color) in zipped:
+        endX = startX + (percent * 1000)
+        bar[:, int(startX):int(endX)] = color.astype("uint8")
+        startX = endX
+    return bar
+
 # --- 4. 메인 UI 및 로직 ---
 
 st.title("🌌 우주 색소 & 에너지 분석기")
-st.markdown("우주 사진의 색상을 분석하여 **에너지 분포**와 **구성 비율**을 시각화합니다.")
+st.markdown("우주 사진의 색상을 분석하여 **에너지 분포**를 시각화하고 상세 데이터를 제공합니다.")
 
 # 사이드바
 st.sidebar.header("🔭 관측 옵션")
-k_value = st.sidebar.slider("추출할 색상 개수", 3, 20, 8)
+k_value = st.sidebar.slider("추출할 색상 개수", 3, 20, 10)
 resize_quality = st.sidebar.select_slider(
     "분석 정밀도", options=[200, 400, 600, 800], value=600
 )
@@ -88,11 +102,11 @@ if uploaded_file is not None:
         st.subheader("📷 원본 이미지")
         st.image(image, use_column_width=True)
 
-    with st.spinner('데이터 처리 중...'):
+    with st.spinner('광자 에너지 계산 중...'):
         # 1. 색상 분석
         hist, centers = analyze_colors(image, k_value, resize_quality)
         
-        # 2. 데이터 구조화 (정렬을 위해 리스트로 변환)
+        # 2. 데이터 구조화
         data_list = []
         for i, (percent, color) in enumerate(zip(hist, centers)):
             color_int = color.astype(int)
@@ -109,70 +123,89 @@ if uploaded_file is not None:
 
         with col2:
             st.subheader("📊 분석 컨트롤 패널")
-            # --- 정렬 버튼 추가 ---
+            # --- 정렬 버튼 ---
             sort_option = st.radio(
-                "그래프 정렬 기준을 선택하세요:",
+                "정렬 기준 선택:",
                 ("색상 분포(%) 많은 순", "에너지(eV) 높은 순"),
                 horizontal=True
             )
 
-            # 선택에 따른 데이터 정렬
+            # 데이터 정렬 로직
             if sort_option == "에너지(eV) 높은 순":
-                # 에너지가 높은 순서대로 정렬 (내림차순)
                 sorted_data = sorted(data_list, key=lambda x: x['energy'], reverse=True)
-                sort_label = "순위(에너지)"
+                sort_label = "Rank"
             else:
-                # 분포 비율이 높은 순서대로 정렬 (내림차순)
                 sorted_data = sorted(data_list, key=lambda x: x['percent'], reverse=True)
-                sort_label = "순위(분포)"
+                sort_label = "Rank"
 
-            # --- 시각화 데이터 준비 ---
-            plot_energies = [d['energy'] for d in sorted_data]
-            plot_percents = [d['percent'] for d in sorted_data]
-            plot_colors = [d['color']/255 for d in sorted_data]
-            plot_labels = [f"{sort_label} {i+1}" for i in range(len(sorted_data))]
-
-            # 탭을 사용하여 그래프 분리
-            tab1, tab2 = st.tabs(["⚡ 에너지 막대 그래프", "🥧 색상 분포 파이차트"])
+            # --- 탭 구성 ---
+            tab1, tab2 = st.tabs(["⚡ 에너지 그래프", "🎨 색상 스펙트럼 & 상세"])
 
             with tab1:
-                # --- 막대 그래프 (에너지) ---
-                fig_bar, ax_bar = plt.subplots(figsize=(8, 5))
+                # [탭 1] 에너지 막대 그래프
+                fig_bar, ax_bar = plt.subplots(figsize=(8, 6))
                 fig_bar.patch.set_facecolor('#f0f2f6')
                 ax_bar.set_facecolor('#f0f2f6')
                 
+                plot_energies = [d['energy'] for d in sorted_data]
+                plot_colors = [d['color']/255 for d in sorted_data]
+                plot_labels = [f"{d['hex']}" for d in sorted_data] # 라벨을 색상코드로 변경
+
                 y_pos = np.arange(len(sorted_data))
-                ax_bar.barh(y_pos, plot_energies, color=plot_colors, height=0.7)
+                ax_bar.barh(y_pos, plot_energies, color=plot_colors, height=0.6)
                 ax_bar.set_yticks(y_pos)
                 ax_bar.set_yticklabels(plot_labels)
-                ax_bar.invert_yaxis() # 상위 항목이 위로 오게
+                ax_bar.invert_yaxis() 
                 
                 ax_bar.set_xlabel("광자 에너지 (eV)")
-                ax_bar.set_title(f"주요 색상별 에너지 ({sort_option})")
+                ax_bar.set_title(f"색상별 에너지 ({sort_option})")
                 
                 st.pyplot(fig_bar)
+                
+                # 간단 요약
+                max_e = max(d['energy'] for d in data_list)
+                min_e = min(d['energy'] for d in data_list)
+                st.info(f"이 사진의 에너지 범위는 **{min_e:.2f} eV** ~ **{max_e:.2f} eV** 입니다.")
 
             with tab2:
-                # --- 파이 차트 (분포) - 리스트 대체 ---
-                fig_pie, ax_pie = plt.subplots(figsize=(6, 6))
-                fig_pie.patch.set_facecolor('#f0f2f6')
+                # [탭 2] 스펙트럼 바 + 상세 리스트
+                st.write("**🌈 색상 분포 스펙트럼**")
+                # 스펙트럼 바는 전체 분포를 보여주므로 항상 % 순으로 생성
+                bar_image = plot_bar(hist, centers)
+                st.image(bar_image, use_column_width=True)
                 
-                # 파이 차트 그리기
-                wedges, texts, autotexts = ax_pie.pie(
-                    plot_percents, 
-                    labels=plot_labels,
-                    colors=plot_colors,
-                    autopct='%1.1f%%', # 퍼센트 표시
-                    startangle=90,
-                    textprops=dict(color="black")
-                )
+                st.write(f"**📝 상세 데이터 ({sort_option})**")
                 
-                ax_pie.set_title("우주 이미지 색상 구성 비율")
-                st.pyplot(fig_pie)
-                
-            # --- 간단한 요약 정보 표시 ---
-            st.info(f"""
-            **분석 요약:**
-            * 가장 높은 에너지는 **{max(plot_energies):.2f} eV** 입니다.
-            * 가장 많이 분포한 색상은 전체의 **{max(plot_percents)*100:.1f}%** 를 차지합니다.
-            """)
+                # 리스트 출력 (선택한 정렬 기준에 따름)
+                for item in sorted_data:
+                    st.markdown(
+                        f"""
+                        <div style="
+                            display: flex; 
+                            align-items: center; 
+                            margin-bottom: 8px; 
+                            padding: 10px; 
+                            background-color: white; 
+                            border-radius: 5px; 
+                            box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                            <div style="
+                                width: 40px; 
+                                height: 40px; 
+                                background-color: {item['hex']}; 
+                                border: 1px solid #ddd; 
+                                margin-right: 15px; 
+                                border-radius: 4px;">
+                            </div>
+                            <div style="font-family: monospace; color: #333; width: 100%;">
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="font-weight: bold; font-size: 1.1em;">{item['hex']}</span>
+                                    <span style="color: #666;">점유율: {item['percent']*100:.1f}%</span>
+                                </div>
+                                <div style="margin-top: 4px; font-size: 0.9em;">
+                                    파장: {item['wavelength']:.1f} nm │ <span style="color: #d63031; font-weight: bold;">에너지: {item['energy']:.3f} eV</span>
+                                </div>
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
