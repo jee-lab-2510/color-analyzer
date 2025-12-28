@@ -6,52 +6,50 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import os
 
-# --- 페이지 설정 ---
+# --- 1. 페이지 설정 ---
 st.set_page_config(page_title="우주 색소 에너지 분석기", layout="wide")
 
-# --- 폰트 설정 (packages.txt 방식) ---
-# 리눅스(Streamlit Cloud)에 설치된 나눔 폰트를 찾아서 설정합니다.
+# --- 2. 한글 폰트 설정 ---
 def setup_korean_font():
-    # 1. 나눔 폰트가 설치되어 있는지 확인
     font_found = False
     for font in fm.fontManager.ttflist:
         if 'Nanum' in font.name:
             plt.rc('font', family=font.name)
             font_found = True
             break
-            
-    # 2. 설치된 폰트가 없으면(로컬 실행 등) 기본 폰트 시도
     if not font_found:
-        # 윈도우/맥 등 로컬 환경을 위한 예비책
         if os.name == 'nt':  # Windows
             plt.rc('font', family='Malgun Gothic')
         elif os.name == 'posix':  # Mac/Linux
             plt.rc('font', family='AppleGothic')
-    
-    # 마이너스 기호 깨짐 방지
     plt.rcParams['axes.unicode_minus'] = False
 
-# 폰트 설정 실행
 setup_korean_font()
 
-# --- 상수 정의 ---
-H_PLANCK = 6.626e-34  
-C_LIGHT = 3.00e8    
+# --- 3. 과학 상수 및 계산 함수 ---
+H_PLANCK = 6.626e-34
+C_LIGHT = 3.00e8
 EV_PER_JOULE = 6.242e18 
 
-st.title("✨ 우주 이미지 색소 & 에너지 분석기")
-st.write("우주 사진에서 주요 색상을 추출하고, 해당 빛의 에너지를 분석합니다.")
+def rgb_to_wavelength(rgb):
+    """RGB -> 파장(nm) 근사 변환"""
+    r, g, b = rgb[0], rgb[1], rgb[2]
+    if r > g and r > b: # Reddish
+        wavelength = 620 + (130 * (r/255))
+    elif g > r and g > b: # Greenish
+        wavelength = 495 + (125 * (g/255))
+    elif b > r and b > g: # Blueish
+        wavelength = 380 + (115 * (b/255))
+    else:
+        wavelength = 550 
+    return max(380, min(750, wavelength))
 
-# --- 사이드바 ---
-st.sidebar.header("분석 옵션")
-k_value = st.sidebar.slider("추출할 주요 색상 개수", 3, 20, 8)
-resize_quality = st.sidebar.select_slider(
-    "분석 품질 (높을수록 정밀)", options=[200, 400, 600, 800], value=600
-)
+def calculate_photon_energy(wavelength_nm):
+    """파장(nm) -> 에너지(eV)"""
+    wavelength_m = wavelength_nm * 1e-9
+    energy_joule = (H_PLANCK * C_LIGHT) / wavelength_m
+    return energy_joule * EV_PER_JOULE
 
-uploaded_file = st.file_uploader("우주 이미지를 업로드하세요...", type=["jpg", "jpeg", "png"])
-
-# --- 함수 정의 ---
 def analyze_colors(image, k, resize_val):
     img = image.resize((resize_val, resize_val))
     img_array = np.array(img)
@@ -65,96 +63,116 @@ def analyze_colors(image, k, resize_val):
     hist = hist.astype("float")
     hist /= hist.sum()
     
-    zipped = sorted(zip(hist, clt.cluster_centers_), key=lambda x: x[0], reverse=True)
-    hist, centers = zip(*zipped)
-    return hist, centers
+    return hist, clt.cluster_centers_
 
-def plot_bar(hist, centers):
-    bar = np.zeros((100, 1000, 3), dtype="uint8")
-    startX = 0
-    for (percent, color) in zip(hist, centers):
-        endX = startX + (percent * 1000)
-        bar[:, int(startX):int(endX)] = color.astype("uint8")
-        startX = endX
-    return bar
+# --- 4. 메인 UI 및 로직 ---
 
-def rgb_to_wavelength(rgb):
-    r, g, b = rgb[0], rgb[1], rgb[2]
-    
-    if r > g and r > b: 
-        wavelength = 620 + (130 * (r/255))
-    elif g > r and g > b: 
-        wavelength = 495 + (125 * (g/255))
-    elif b > r and b > g: 
-        wavelength = 380 + (115 * (b/255))
-    else:
-        wavelength = 550 
+st.title("🌌 우주 색소 & 에너지 분석기")
+st.markdown("우주 사진의 색상을 분석하여 **에너지 분포**와 **구성 비율**을 시각화합니다.")
 
-    return max(380, min(750, wavelength))
+# 사이드바
+st.sidebar.header("🔭 관측 옵션")
+k_value = st.sidebar.slider("추출할 색상 개수", 3, 20, 8)
+resize_quality = st.sidebar.select_slider(
+    "분석 정밀도", options=[200, 400, 600, 800], value=600
+)
 
-def calculate_photon_energy(wavelength_nm):
-    wavelength_m = wavelength_nm * 1e-9
-    energy_joule = (H_PLANCK * C_LIGHT) / wavelength_m
-    return energy_joule * EV_PER_JOULE
+uploaded_file = st.file_uploader("우주 이미지를 업로드하세요", type=["jpg", "jpeg", "png"])
 
-# --- 메인 실행 ---
 if uploaded_file is not None:
     col1, col2 = st.columns([1, 1])
+    
     image = Image.open(uploaded_file).convert('RGB')
     
     with col1:
-        st.subheader("원본 우주 이미지")
+        st.subheader("📷 원본 이미지")
         st.image(image, use_column_width=True)
 
-    with st.spinner('우주 에너지 분석 중...'):
+    with st.spinner('데이터 처리 중...'):
+        # 1. 색상 분석
         hist, centers = analyze_colors(image, k_value, resize_quality)
-        bar = plot_bar(hist, centers)
         
+        # 2. 데이터 구조화 (정렬을 위해 리스트로 변환)
+        data_list = []
+        for i, (percent, color) in enumerate(zip(hist, centers)):
+            color_int = color.astype(int)
+            wavelength = rgb_to_wavelength(color_int)
+            energy = calculate_photon_energy(wavelength)
+            
+            data_list.append({
+                "percent": percent,
+                "color": color_int,
+                "wavelength": wavelength,
+                "energy": energy,
+                "hex": '#{:02x}{:02x}{:02x}'.format(*color_int)
+            })
+
         with col2:
-            st.subheader("분석 결과")
-            st.image(bar, use_column_width=True, caption="색상 분포 스펙트럼")
-            
-            st.subheader("🌠 빛의 파장 및 에너지")
-            energy_values = []
-            labels = []
+            st.subheader("📊 분석 컨트롤 패널")
+            # --- 정렬 버튼 추가 ---
+            sort_option = st.radio(
+                "그래프 정렬 기준을 선택하세요:",
+                ("색상 분포(%) 많은 순", "에너지(eV) 높은 순"),
+                horizontal=True
+            )
 
-            for i, (percent, color) in enumerate(zip(hist, centers)):
-                color_int = color.astype(int)
-                hex_color = '#{:02x}{:02x}{:02x}'.format(*color_int)
-                wavelength = rgb_to_wavelength(color_int)
-                energy_ev = calculate_photon_energy(wavelength)
+            # 선택에 따른 데이터 정렬
+            if sort_option == "에너지(eV) 높은 순":
+                # 에너지가 높은 순서대로 정렬 (내림차순)
+                sorted_data = sorted(data_list, key=lambda x: x['energy'], reverse=True)
+                sort_label = "순위(에너지)"
+            else:
+                # 분포 비율이 높은 순서대로 정렬 (내림차순)
+                sorted_data = sorted(data_list, key=lambda x: x['percent'], reverse=True)
+                sort_label = "순위(분포)"
+
+            # --- 시각화 데이터 준비 ---
+            plot_energies = [d['energy'] for d in sorted_data]
+            plot_percents = [d['percent'] for d in sorted_data]
+            plot_colors = [d['color']/255 for d in sorted_data]
+            plot_labels = [f"{sort_label} {i+1}" for i in range(len(sorted_data))]
+
+            # 탭을 사용하여 그래프 분리
+            tab1, tab2 = st.tabs(["⚡ 에너지 막대 그래프", "🥧 색상 분포 파이차트"])
+
+            with tab1:
+                # --- 막대 그래프 (에너지) ---
+                fig_bar, ax_bar = plt.subplots(figsize=(8, 5))
+                fig_bar.patch.set_facecolor('#f0f2f6')
+                ax_bar.set_facecolor('#f0f2f6')
                 
-                energy_values.append(energy_ev)
-                labels.append(f"색상 {i+1}") 
+                y_pos = np.arange(len(sorted_data))
+                ax_bar.barh(y_pos, plot_energies, color=plot_colors, height=0.7)
+                ax_bar.set_yticks(y_pos)
+                ax_bar.set_yticklabels(plot_labels)
+                ax_bar.invert_yaxis() # 상위 항목이 위로 오게
                 
-                st.markdown(
-                    f"""
-                    <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                        <div style="width: 30px; height: 30px; background-color: {hex_color}; border: 1px solid #ddd; margin-right: 10px;"></div>
-                        <div style="font-family: monospace;">
-                            <b>{hex_color}</b> ({percent*100:.1f}%) <br>
-                            파장: {wavelength:.1f} nm, 에너지: {energy_ev:.3f} eV
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
+                ax_bar.set_xlabel("광자 에너지 (eV)")
+                ax_bar.set_title(f"주요 색상별 에너지 ({sort_option})")
+                
+                st.pyplot(fig_bar)
+
+            with tab2:
+                # --- 파이 차트 (분포) - 리스트 대체 ---
+                fig_pie, ax_pie = plt.subplots(figsize=(6, 6))
+                fig_pie.patch.set_facecolor('#f0f2f6')
+                
+                # 파이 차트 그리기
+                wedges, texts, autotexts = ax_pie.pie(
+                    plot_percents, 
+                    labels=plot_labels,
+                    colors=plot_colors,
+                    autopct='%1.1f%%', # 퍼센트 표시
+                    startangle=90,
+                    textprops=dict(color="black")
                 )
-            
-            # --- 그래프 그리기 ---
-            st.subheader("⚡ 에너지 스펙트럼")
-            fig, ax = plt.subplots(figsize=(10, 5))
-            
-            # 배경색 깔끔하게
-            fig.patch.set_facecolor('#f0f2f6')
-            ax.set_facecolor('#f0f2f6')
-
-            for j in range(len(energy_values)):
-                ax.barh(labels[j], energy_values[j], color=[c / 255. for c in centers[j]])
-            
-            ax.set_xlabel("에너지 (eV)")
-            ax.set_ylabel("추출된 색상")
-            ax.set_title("색상별 광자 에너지 분석")
-            ax.invert_yaxis()
-            
-            st.pyplot(fig)
-            
+                
+                ax_pie.set_title("우주 이미지 색상 구성 비율")
+                st.pyplot(fig_pie)
+                
+            # --- 간단한 요약 정보 표시 ---
+            st.info(f"""
+            **분석 요약:**
+            * 가장 높은 에너지는 **{max(plot_energies):.2f} eV** 입니다.
+            * 가장 많이 분포한 색상은 전체의 **{max(plot_percents)*100:.1f}%** 를 차지합니다.
+            """)
