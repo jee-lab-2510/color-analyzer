@@ -157,3 +157,4 @@ if uploaded_file is not None:
             ax.invert_yaxis()
             
             st.pyplot(fig)
+            
